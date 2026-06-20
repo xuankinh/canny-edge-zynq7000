@@ -10,11 +10,13 @@ A fully pipelined Canny Edge Detection IP core designed in Vivado HLS, integrate
 
 | Deliverable                                  | Location                       |
 | --------------------------------------------- | ------------------------------- |
-| HLS implementation (hardware)                 | [hls/](hls)                     |
-| Vivado block design (IP Integrator)            | [vivado/](vivado)               |
-| Bare-metal firmware (Vitis/SDK)                | [sdk/](sdk)                      |
-| Python verification framework (golden model)   | [python/](python)               |
+| HLS implementation (hardware)                 | [hls/canny.cpp](hls/canny.cpp), [hls/tb_canny.cpp](hls/tb_canny.cpp) |
+| Vivado block design (IP Integrator)            | [vivado/design_1.tcl](vivado/design_1.tcl) |
+| Bare-metal firmware (Vitis/SDK)                | [sdk/main.c](sdk/main.c)        |
+| Python verification framework (golden model)   | [python/edge-detection.ipynb](python/edge-detection.ipynb) |
+| Sample input images                            | [data/input/](data/input)       |
 | Reports (synthesis, timing, power, utilization)| [reports/](reports)             |
+| Diagrams (block design, device package)        | [pictures/](pictures)           |
 
 ## Index
 - [Setup](#setup)
@@ -33,9 +35,9 @@ A fully pipelined Canny Edge Detection IP core designed in Vivado HLS, integrate
 ---
 
 # Setup
-To set up the Vivado HLS project and IP Integrator block design, refer to [hls/hls-setup.README.md](hls/hls-setup.README.md).
-To set up the bare-metal application in Vitis/SDK, refer to [sdk/sdk-setup.README.md](sdk/sdk-setup.README.md).
-For the Python verification framework, refer to [python/python.README.md](python/python.README.md).
+- **HLS / Vivado:** open Vivado HLS with [hls/canny.cpp](hls/canny.cpp) and [hls/tb_canny.cpp](hls/tb_canny.cpp) for C-simulation, synthesis, and co-simulation. Use [vivado/design_1.tcl](vivado/design_1.tcl) to regenerate the block design in Vivado IP Integrator (`source design_1.tcl` in the Tcl console).
+- **Bare-metal firmware:** import [sdk/main.c](sdk/main.c) into a Vitis/SDK application project targeting the exported hardware platform.
+- **Python verification:** open [python/edge-detection.ipynb](python/edge-detection.ipynb) in Jupyter; it loads the sample images in [data/input/](data/input) and compares hardware-simulated output against the OpenCV golden model.
 
 > **Note on hardware deployment:** this project reached full bitstream generation with positive timing closure (see [Implementation Results](#implementation-results)), but was not deployed on a physical board due to hardware availability constraints. All accuracy results were obtained through pre-silicon HW/SW co-simulation against a software golden model.
 
@@ -44,12 +46,56 @@ For the Python verification framework, refer to [python/python.README.md](python
 # Algorithm
 The Canny edge detection algorithm implemented in this core follows four hardware stages (the classical 5-stage algorithm, with double-threshold and hysteresis merged into a single hardware stage for pipeline efficiency):
 
-- **Grayscale conversion + Gaussian Blur** — Converts the input frame to grayscale and applies a 3×3 Gaussian kernel to suppress noise before gradient computation.
-- **Sobel Gradient** — Computes horizontal and vertical intensity gradients and classifies the gradient direction into 4 angle bins.
-- **Non-Maximum Suppression (NMS)** — Thins detected edges down to single-pixel width by suppressing non-maximal gradient responses along the gradient direction.
-- **Double Threshold + Hysteresis** — Classifies pixels as strong/weak/non-edge, then promotes weak edges connected to strong edges in their 8-neighborhood.
+### 1. Grayscale conversion + Gaussian Blur
+Converts the input frame to grayscale and applies a 3×3 Gaussian kernel to suppress noise before gradient computation.
 
-<!-- IMAGE: insert a block diagram of the 4-stage pipeline here, e.g. pictures/canny-pipeline.png -->
+$$G(x,y) = \frac{1}{2\pi\sigma^2} e^{-\frac{x^2+y^2}{2\sigma^2}}$$
+
+$$I_{blur}(x,y) = \sum_{i=-1}^{1}\sum_{j=-1}^{1} G(i,j)\cdot I(x+i, y+j)$$
+
+### 2. Sobel Gradient
+Computes horizontal and vertical intensity gradients using the Sobel kernels:
+
+$$G_x = \begin{bmatrix} -1 & 0 & 1 \\ -2 & 0 & 2 \\ -1 & 0 & 1 \end{bmatrix}, \quad G_y = \begin{bmatrix} -1 & -2 & -1 \\ 0 & 0 & 0 \\ 1 & 2 & 1 \end{bmatrix}$$
+
+Gradient magnitude (approximated to avoid a hardware square-root):
+
+$$|G| = \sqrt{G_x^2 + G_y^2} \approx |G_x| + |G_y|$$
+
+Gradient direction, quantized into 4 angle bins (0°, 45°, 90°, 135°) to avoid an `arctan`/division in hardware:
+
+$$\theta = \arctan\left(\frac{G_y}{G_x}\right)$$
+
+### 3. Non-Maximum Suppression (NMS)
+Thins detected edges down to single-pixel width by suppressing non-maximal gradient responses along the gradient direction:
+
+$$
+I_{nms}(x,y) =
+\begin{cases}
+|G(x,y)| & \text{if } |G(x,y)| \geq |G(\text{neighbor}_1)| \text{ and } |G(x,y)| \geq |G(\text{neighbor}_2)| \\
+0 & \text{otherwise}
+\end{cases}
+$$
+
+### 4. Double Threshold + Hysteresis
+Classifies pixels as strong/weak/non-edge using two thresholds $T_{low}$, $T_{high}$:
+
+$$
+\text{pixel class} =
+\begin{cases}
+\text{Strong edge} & |G| \geq T_{high} \\
+\text{Weak edge} & T_{low} \leq |G| < T_{high} \\
+\text{Non-edge} & |G| < T_{low}
+\end{cases}
+$$
+
+A weak edge is promoted to a real edge if it has at least one strong edge in its 8-neighborhood:
+
+$$I_{out}(x,y) = 1 \iff \text{pixel is Strong, or (Weak} \wedge \exists \text{ neighbor Strong)}$$
+
+![Pipeline output — Crack dataset](reports/pipeline_crack.png)
+![Pipeline output — PCB Defect dataset](reports/pipeline_pcb_defect.png)
+![Pipeline output — X-Ray dataset](reports/pipeline_xray.png)
 
 ---
 
@@ -58,19 +104,17 @@ The Canny edge detection algorithm implemented in this core follows four hardwar
 ## HLS Pipeline Stages
 Each stage is implemented as a separate HLS function connected by `hls::stream` FIFOs, with `#pragma HLS DATAFLOW` enabling all four stages to execute concurrently on consecutive frames. Each stage uses a 2-row line buffer and a 3×3 sliding window built directly from BRAM, avoiding floating-point and division operations entirely — all arithmetic is fixed-point/integer to meet the 10 ns clock target.
 
-<!-- IMAGE: insert the line-buffer / sliding-window diagram here -->
-
 The core exposes:
 - An **AXI4-Stream** slave/master pair (`stream_in`, `stream_out`) for pixel-level video transfer.
 - An **AXI4-Lite** control bus (`s_axi_CTRL_BUS`) for runtime configuration of `rows`, `cols`, `low_thresh`, and `high_thresh` from the ARM Cortex-A9.
 
 | Stage                  | Source file                  |
 | ----------------------- | ----------------------------- |
-| Gaussian Blur            | [hls/sobel.cpp](hls/sobel.cpp) — `gaussian_filter` |
-| Sobel Gradient           | [hls/sobel.cpp](hls/sobel.cpp) — `sobel_gradient`  |
-| Non-Maximum Suppression  | [hls/sobel.cpp](hls/sobel.cpp) — `nms_filter`      |
-| Double Threshold + Hysteresis | [hls/sobel.cpp](hls/sobel.cpp) — `hysteresis_threshold` |
-| Testbench                | [hls/tb_sobel.cpp](hls/tb_sobel.cpp) |
+| Gaussian Blur            | [hls/canny.cpp](hls/canny.cpp) |
+| Sobel Gradient           | [hls/canny.cpp](hls/canny.cpp) |
+| Non-Maximum Suppression  | [hls/canny.cpp](hls/canny.cpp) |
+| Double Threshold + Hysteresis | [hls/canny.cpp](hls/canny.cpp) |
+| Testbench                | [hls/tb_canny.cpp](hls/tb_canny.cpp) |
 
 ## System Integration
 The HLS IP core (`canny_core_0`) is integrated into a Zynq-7000 SoC design in Vivado IP Integrator alongside:
@@ -79,7 +123,8 @@ The HLS IP core (`canny_core_0`) is integrated into a Zynq-7000 SoC design in Vi
 - **AXI SmartConnect / AXI Interconnect** — routes control and data buses between PS and PL.
 - **Processor System Reset** — generates synchronized reset signals across the design.
 
-<!-- IMAGE: insert the Vivado block design diagram here -->
+![Vivado Block Design](pictures/block-design.png)
+![Device Package View](pictures/device_package_view.png)
 
 ---
 
@@ -132,14 +177,19 @@ On-chip power estimate from the implemented netlist:
 | Device static | 0.145 | 8% |
 | **Total on-chip power** | **1.768 W** | |
 
-<!-- IMAGE: insert synthesis/timing/power/utilization report screenshots here -->
+![Synthesis Report](reports/synthesis_report.png)
+![Utilization Report — HLS estimate](reports/utilization_hls.png)
+![Utilization Report — Post-Implementation](reports/utilization_report.png)
+![Timing Report](reports/timing_report.png)
+![Power Report](reports/power_report.png)
+![Co-simulation Report](reports/cosim_report.png)
 
 ---
 
 # Software Verification Framework
 Since the design was not deployed on physical hardware, accuracy was validated through a Python-based HW/SW co-simulation framework using OpenCV's Canny implementation as a golden reference model. For each test image, the framework computes Precision, Recall, F1-Score, PSNR, MSE, and SSIM between the software golden output and the simulated hardware-accelerator output, and renders a pixel-level error map (white = match, red = miss, blue = false positive).
 
-Source: [python/verify_accuracy.py](python/verify_accuracy.py)
+Source: [python/edge-detection.ipynb](python/edge-detection.ipynb)
 
 ## Results
 
@@ -151,7 +201,7 @@ Evaluated on three real-world datasets to test robustness across different edge 
 | Chest X-Ray    | 92.7%     | 67.1%  | 77.9%    | 10.76     | 5458.5  | 63.8%    | 0.5%    |
 | PCB Defect     | 70.3%     | 98.6%  | 82.1%    | 20.17     | 625.5   | 96.5%    | 0.4%    |
 
-<!-- IMAGE: insert the verification report figure here (input / golden model / hardware output / error map) -->
+![Verification Results — Error Maps](reports/verification_results.png)
 
 ---
 
