@@ -150,6 +150,10 @@ Post-Implementation (full SoC design, place & route):
 | DSPs              | 16   | 220       | 7.3               |
 | Slice Registers   | 8740 | 106400    | 8.2               |
 
+![Utilization Report — HLS estimate](reports/utilization_hls.png)
+![Utilization Report — Post-Implementation](reports/utilization_report.png)
+![Synthesis Report](reports/synthesis_report.png)
+
 ## Timing Closure
 The implemented design closed timing with **positive slack** on the target clock:
 
@@ -161,6 +165,9 @@ The implemented design closed timing with **positive slack** on the target clock
 | Worst Pulse Width Slack (WPWS)| 3.750 ns  |
 
 Bitstream generation completed successfully.
+
+![Timing Report](reports/timing_report.png)
+![Co-simulation Report](reports/cosim_report.png)
 
 ## Power
 On-chip power estimate from the implemented netlist:
@@ -177,12 +184,7 @@ On-chip power estimate from the implemented netlist:
 | Device static | 0.145 | 8% |
 | **Total on-chip power** | **1.768 W** | |
 
-![Synthesis Report](reports/synthesis_report.png)
-![Utilization Report — HLS estimate](reports/utilization_hls.png)
-![Utilization Report — Post-Implementation](reports/utilization_report.png)
-![Timing Report](reports/timing_report.png)
 ![Power Report](reports/power_report.png)
-![Co-simulation Report](reports/cosim_report.png)
 
 ---
 
