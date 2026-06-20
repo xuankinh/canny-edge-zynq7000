@@ -18,7 +18,28 @@ A fully pipelined Canny Edge Detection IP core designed in Vivado HLS, integrate
 | Reports (synthesis, timing, power, utilization)| [reports/](reports)             |
 | Diagrams (block design, device package)        | [pictures/](pictures)           |
 
+## Project Structure
+
+```
+canny-edge-zynq7000/
+├── README.md
+├── data/
+│   └── input/                 # Sample test images (xray, pcb, crack) used for verification
+├── hls/
+│   ├── canny.cpp               # HLS hardware implementation: all 4 pipeline stages
+│   └── tb_canny.cpp            # C-simulation testbench for the HLS core
+├── vivado/
+│   └── design_1.tcl            # Tcl script to regenerate the Vivado IP Integrator block design
+├── sdk/
+│   └── main.c                  # Bare-metal firmware (Vitis/SDK) running on the ARM Cortex-A9
+├── python/
+│   └── edge-detection.ipynb    # Golden-model verification notebook (OpenCV vs. simulated HW output)
+├── pictures/                    # Block design / device package diagrams
+└── reports/                     # Synthesis, timing, power, utilization, co-sim, and verification reports
+```
+
 ## Index
+- [Project Structure](#project-structure)
 - [Setup](#setup)
 - [Algorithm](#algorithm)
 - [Hardware Architecture](#hardware-architecture)
