@@ -1,0 +1,11 @@
+# Exclude Jupyter Notebooks from GitHub's language statistics.
+# .ipynb files are JSON containing base64-encoded image outputs,
+# which inflates their byte count far beyond the actual code content,
+# making GitHub Linguist misreport the repo as "99%% Jupyter Notebook"
+# even though the core engineering work is in HLS C++ (canny.cpp) and
+# bare-metal C (sdk/main.c).
+*.ipynb linguist-vendored
+
+*.cpp linguist-detectable=true
+*.c   linguist-detectable=true
+*.h   linguist-detectable=true
